@@ -1,0 +1,22 @@
+{
+  "model": "claude-haiku-5-5",
+  "dates": [
+    "2026-11-17"
+  ],
+  "commit": "0d2571eb",
+  "judge": "claude-code",
+  "batches": [
+    "scenarios-20261117-093040-e1"
+  ],
+  "cases": [
+    {
+      "name": "hung",
+      "group": null,
+      "runs": [
+        "pass",
+        "fail",
+        "pass"
+      ]
+    }
+  ]
+}

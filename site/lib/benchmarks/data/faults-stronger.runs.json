@@ -1,0 +1,198 @@
+{
+  "hung/1": {
+    "type": "agent",
+    "expected": "shop-web hangs: the container runs but answers no request, so its health check times out.",
+    "diagnosis": {
+      "rootCause": "shop-web stopped answering its health probe on http://localhost:8000/health after 09:31:21 while its uvicorn process stayed alive and idle, so Docker marked it unhealthy at 09:32:00. The cause of the stall is not settled: it could be a hang in shop-web's own code or a wait on shop-db, and no collected evidence tells them apart.",
+      "category": "unknown",
+      "confidence": 0.35,
+      "unsure": true
+    },
+    "plan": {
+      "kind": "act",
+      "steps": [
+        "docker.restart shop-web"
+      ],
+      "reason": "I am not sure of the cause: shop-web stopped answering its health probe while its process stayed alive and idle, and the evidence does not separate a hang in its own code from a wait on shop-db. A restart of shop-web alone is the smallest reversible step, leaves shop-db untouched, and tests whether the stall clears; shop-proxy only depends on shop-web and is checked afterwards rather than restarted.",
+      "instructions": null
+    },
+    "toolCalls": [
+      {
+        "name": "inspect_container",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-web, tail: 100"
+      },
+      {
+        "name": "container_stats",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-db, tail: 50"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 30"
+      },
+      {
+        "name": "knowledge_search",
+        "args": "query: SHOP_DEBUG_HOOK setting, sources: [\"repo\"]"
+      },
+      {
+        "name": "knowledge_search",
+        "args": "{\"query\": \"shop-web health check timed out uvicorn /health unhealthy\", \"sources…"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-worker, tail: 50"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Found the cause",
+        "ok": true
+      },
+      {
+        "label": "Proposed the expected plan",
+        "ok": true
+      },
+      {
+        "label": "No step it did not need",
+        "ok": true
+      }
+    ],
+    "note": "The diagnosis names the right component and the right failure mode. It says shop-web's uvicorn process stayed alive and idle (CPU 0.0%, 4 pids, no OOM kill, no restarts) but stopped answering requests. As a result, the /health probes timed out at 09:31:31, 09:31:44 and 09:31:57, and Docker marked the container unhealthy at 09:32:00. That matches the expected cause: shop-web hangs, the container runs but answers no request, and its health check times out. The evidence is detailed and accurate, including that the timed-out probes left no request line in the logs. The main weakness is that it does not commit to why it stalls. It offers a hang in shop-web's own code and a wait on shop-db as equal possibilities and sets the category to 'unknown'. That leaves open a database cause that the expected output does not support, so it falls short of a clean, committed match.",
+    "failure": null
+  },
+  "hung/2": {
+    "type": "agent",
+    "expected": "shop-web hangs: the container runs but answers no request, so its health check times out.",
+    "diagnosis": {
+      "rootCause": "shop-web's health check (a urllib request to localhost:8000/health with a 3 s timeout) has timed out on every run since 09:33:34, so Docker marked the container unhealthy. The uvicorn process started by `uvicorn app:app` is still running, and the evidence does not yet show whether the app itself stalls or only the probe fails.",
+      "category": "code",
+      "confidence": 0.35,
+      "unsure": true
+    },
+    "plan": {
+      "kind": "act",
+      "steps": [
+        "docker.restart shop-web"
+      ],
+      "reason": "I am not sure of the cause: shop-web's app log shows 200 responses with no errors and the container shows no resource pressure, yet its health probe has timed out since 09:33:34, and the earlier restart at 09:32 did not stop the failures from returning, so this restart may only bring the fault back. I am proposing it because it is the smallest reversible step that might clear a stalled process, and it leaves shop-db alone.",
+      "instructions": null
+    },
+    "toolCalls": [
+      {
+        "name": "inspect_container",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-web, tail: 100"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 60"
+      },
+      {
+        "name": "container_stats",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-worker, tail: 60"
+      },
+      {
+        "name": "container_stats",
+        "args": "container: shop-db"
+      },
+      {
+        "name": "knowledge_search",
+        "args": "query: SHOP_DEBUG_HOOK setting what it does and value, sources: [\"repo\"]"
+      },
+      {
+        "name": "knowledge_search",
+        "args": "{\"query\": \"uvicorn health endpoint times out while process idle, health check t…"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Found the cause",
+        "ok": false
+      },
+      {
+        "label": "Proposed the expected plan",
+        "ok": true
+      },
+      {
+        "label": "No step it did not need",
+        "ok": true
+      }
+    ],
+    "note": "The diagnosis points to the right component, shop-web. It also reports the right facts: the container is still running (restart count 0, not OOM-killed, no exit) and every /health probe since 09:33:34 has timed out after 3 s. But it stops at that symptom. The expected cause is that shop-web hangs and answers no requests, and the diagnosis says outright that the evidence 'does not yet show whether the app itself stalls or only the probe fails'. It mentions an event-loop stall only as something the stats don't rule out, and never says the app has stopped serving requests. So the component is right but the reason is left open, and the 'code' category adds no specific cause. The extra evidence is accurate and isn't penalised, but the diagnosis never commits to the actual root cause.",
+    "failure": null
+  },
+  "hung/3": {
+    "type": "agent",
+    "expected": "shop-web hangs: the container runs but answers no request, so its health check times out.",
+    "diagnosis": {
+      "rootCause": "shop-web's health probe (GET localhost:8000/health, 3s timeout) has timed out since 09:35:42, so Docker marked the container unhealthy. The process is still running with no OOM kill, no crash and no restart since startup at 09:35:27, and it has logged nothing since, which suggests the app is hung. This is not confirmed, and the kill, stop and start of shop-web at 09:35:05 has no shown sender.",
+      "category": "code",
+      "confidence": 0.4,
+      "unsure": true
+    },
+    "plan": {
+      "kind": "act",
+      "steps": [
+        "docker.restart shop-web"
+      ],
+      "reason": "I am not sure of the cause: shop-web has stopped answering its health probe while idle, which suggests it is hung, but the earlier kill, stop and start at 09:35:05 has no shown sender. A restart of only shop-web is the smallest reversible step that could clear a hang, and it does not change the container's configuration.",
+      "instructions": null
+    },
+    "toolCalls": [
+      {
+        "name": "inspect_container",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-web, tail: 50"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 30"
+      },
+      {
+        "name": "container_stats",
+        "args": "container: shop-web"
+      },
+      {
+        "name": "container_logs",
+        "args": "container: shop-db, tail: 30"
+      },
+      {
+        "name": "recent_events",
+        "args": "minutes: 240"
+      }
+    ],
+    "checks": [
+      {
+        "label": "Found the cause",
+        "ok": true
+      },
+      {
+        "label": "Proposed the expected plan",
+        "ok": true
+      },
+      {
+        "label": "No step it did not need",
+        "ok": true
+      }
+    ],
+    "note": "The expected root cause is that shop-web hangs: the container keeps running but answers no request, so its health check times out. The diagnosis names the same component and the same reason. It says the process is still running with no OOM kill, crash or restart, that it has logged nothing since startup, and that the app appears hung. Its evidence supports a hang rather than a crash or overload: 0.0% CPU and 57.4 MiB with 4 pids, restart count 0, and /health probes timing out from 09:35:42. It also correctly rules out shop-db. The diagnosis loses a little because it leads with the health-probe timeout, which is a symptom. It also hedges, calling the hang a suggestion that is 'not confirmed', and spends space on the 09:35:05 kill/stop/start events with no shown sender, which do not bear on the cause. Still, it commits to the hang as its single explanation and does not offer competing causes.",
+    "failure": null
+  }
+}

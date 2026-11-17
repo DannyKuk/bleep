@@ -5,12 +5,19 @@ import type { SuiteKind } from "./extract";
  * and running `npm test -- -u lib/benchmarks`, which rewrites `data/` from the raw files. */
 export type Source = { kind: SuiteKind; batches: string[]; report: string };
 
-/** The look cases the model under test missed, run again on a stronger model: it shows where the
- * limit is the model's and where it is the case's scoring. */
-export const LOOK_STRONGER: Source = {
-  kind: "look",
-  batches: ["look-20261117-083758"],
-  report: "docs/evals/showcase-2026-11-17.md",
+/** The cases the model under test missed, run again on a stronger model: it shows where the limit
+ * is the model's and where it is the case's scoring. Its runs sit beside the missed ones. */
+export const STRONGER: Partial<Record<SuiteKind, Source>> = {
+  faults: {
+    kind: "faults",
+    batches: ["scenarios-20261117-093040-e1"],
+    report: "docs/evals/scenarios-2026-11-17-3.md",
+  },
+  look: {
+    kind: "look",
+    batches: ["look-20261117-083758"],
+    report: "docs/evals/showcase-2026-11-17.md",
+  },
 };
 
 export const SOURCES: Record<SuiteKind, Source> = {

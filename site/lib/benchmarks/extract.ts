@@ -20,6 +20,11 @@ export type SuiteData = {
 };
 
 export type ToolCall = { name: string; args: string };
+
+/** A fault run's checks, by the labels its dialog shows. */
+export const CAUSE_CHECK = "Found the cause";
+export const PLAN_CHECK = "Proposed the expected plan";
+
 export type Check = { label: string; ok: boolean | null };
 
 export type Diagnosis = {
@@ -274,8 +279,8 @@ function faults(read: Read, batches: string[]): Extracted {
         plan: plan(row.proposal),
         toolCalls: toolCalls(row.tool_calls),
         checks: [
-          { label: "Found the cause", ok: ended ? null : rootCause },
-          { label: "Proposed the expected plan", ok: ended ? null : plan_ },
+          { label: CAUSE_CHECK, ok: ended ? null : rootCause },
+          { label: PLAN_CHECK, ok: ended ? null : plan_ },
           { label: "No step it did not need", ok: ended ? null : !extra },
         ],
         note: grade?.note ?? row.judge_reason ?? null,

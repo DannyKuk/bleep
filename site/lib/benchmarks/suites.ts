@@ -1,5 +1,7 @@
 import attacksData from "./data/attacks.json";
 import docsData from "./data/docs.json";
+import faultsStrongerRuns from "./data/faults-stronger.runs.json";
+import faultsStrongerData from "./data/faults-stronger.json";
 import faultsData from "./data/faults.json";
 import lookStrongerData from "./data/look-stronger.json";
 import lookData from "./data/look.json";
@@ -7,7 +9,15 @@ import loopbackData from "./data/loopback.json";
 import recoveryData from "./data/recovery.json";
 import scriptedData from "./data/scripted.json";
 import talkData from "./data/talk.json";
-import type { CaseRuns, Outcome, SuiteData, SuiteKind } from "./extract";
+import {
+  CAUSE_CHECK,
+  type CaseRuns,
+  type Details,
+  type Outcome,
+  PLAN_CHECK,
+  type SuiteData,
+  type SuiteKind,
+} from "./extract";
 import { inWords } from "./round";
 import { SOURCES } from "./sources";
 
@@ -40,22 +50,54 @@ const LOOK_SCORING: Record<string, string> = {
     'both models answered rightly that nothing was wrong, and the check counted their "not a failure" as a wrong word',
 };
 
+/** The cases the model under test missed, run again on a stronger model. */
+const STRONGER_DATA: Partial<Record<SuiteKind, SuiteData>> = {
+  faults: faultsStrongerData as SuiteData,
+  look: lookStrongerData as SuiteData,
+};
+
+/** The stronger model's runs of the cases this model missed. */
+function strongerOn(kind: SuiteKind, t: Tally): CaseRuns[] {
+  return STRONGER_DATA[kind]?.cases.filter((c) => t.missed.includes(c.name)) ?? [];
+}
+
+const strongerName = (kind: SuiteKind) => modelName(STRONGER_DATA[kind]?.model ?? null);
+
 /** What the stronger model did on the look cases the model under test missed. */
 function lookOnStronger(t: Tally): string {
-  const stronger = lookStrongerData as SuiteData;
-  const tried = stronger.cases.filter((c) => t.missed.includes(c.name));
+  const tried = strongerOn("look", t);
   if (tried.length === 0) return "";
   const fixed = tried.filter((c) => c.runs.every((run) => run === "pass"));
   const still = tried.filter((c) => !fixed.includes(c));
   const runs = fixed.reduce((sum, c) => sum + c.runs.length, 0);
   const fixedLine = fixed.length
-    ? ` A stronger model, ${modelName(stronger.model)}, said it right in all ${runs} runs of ${listed(fixed.map((c) => c.name))}, where ${modelName((lookData as SuiteData).model)} found the cause but would not commit to it.`
+    ? ` A stronger model, ${strongerName("look")}, said it right in all ${runs} runs of ${listed(fixed.map((c) => c.name))}, where ${modelName((lookData as SuiteData).model)} found the cause but would not commit to it.`
     : "";
   const stillLine = still
     .filter((c) => LOOK_SCORING[c.name])
     .map((c) => ` On ${c.name} ${LOOK_SCORING[c.name]}.`)
     .join("");
   return fixedLine + stillLine;
+}
+
+/** How often a stronger model's fault runs passed one check, such as "Found the cause". */
+function checkCount(name: string, label: string): number {
+  return Object.entries(faultsStrongerRuns as Details).filter(
+    ([key, run]) =>
+      key.startsWith(`${name}/`) &&
+      run.type === "agent" &&
+      run.checks.some((check) => check.label === label && check.ok),
+  ).length;
+}
+
+/** What the stronger model did on the faults the model under test missed. */
+function faultsOnStronger(t: Tally): string {
+  return strongerOn("faults", t)
+    .map(
+      (c) =>
+        ` A stronger model, ${strongerName("faults")}, ran ${c.name} ${inWords(c.runs.length)} times: it proposed the expected plan in ${checkCount(c.name, PLAN_CHECK)} and found the cause in ${checkCount(c.name, CAUSE_CHECK)}.`,
+    )
+    .join("");
 }
 
 const missedOn = (t: Tally) =>
@@ -71,9 +113,13 @@ type SuiteText = {
   /** The question's one-sentence answer. */
   answer: (cases: CaseRuns[]) => string;
   verdicts: Record<Outcome, string>;
+  /** A group whose runs read differently from the rest, such as the attacks' controls. */
+  groupVerdicts?: Record<string, Record<Outcome, string>>;
   groups?: Record<string, string>;
-  legend: { pass: string; fail: string; unmet?: string };
+  legend: Legend | ((cases: CaseRuns[]) => Legend);
 };
+
+export type Legend = { pass: string; fail: string; unmet?: string };
 
 const CHANNELS: Record<string, string> = {
   logs: "logs",
@@ -89,6 +135,18 @@ const CHANNELS: Record<string, string> = {
 const attacksOnly = (cases: CaseRuns[]) => cases.filter((c) => c.group !== "control");
 const controls = (cases: CaseRuns[]) => cases.filter((c) => c.group === "control");
 
+/** The fault a control runs: `control-hung-restart` runs `hung`. */
+const controlFault = (name: string) => name.replace(/^control-/, "").replace(/-[a-z]+$/, "");
+
+/** Which faults the controls missed, and whether the faults suite missed them too. */
+function controlMisses(c: Tally): string {
+  if (c.missed.length === 0) return "";
+  const faults = [...new Set(c.missed.map(controlFault))];
+  const alsoMissed = tally((faultsData as SuiteData).cases).missed;
+  const same = faults.every((fault) => alsoMissed.includes(fault));
+  return ` The control misses are on ${listed(faults)}${same ? `, the same miss as in Faults: a missed cause, not an attack` : ""}.`;
+}
+
 const TEXT: Record<SuiteKind, SuiteText> = {
   faults: {
     name: "Faults",
@@ -103,7 +161,7 @@ const TEXT: Record<SuiteKind, SuiteText> = {
       const t = tally(cases);
       return t.pass === t.runs
         ? `Yes. In all ${t.runs} runs Bleep named the cause and proposed the plan the case expects, which is often no step at all.`
-        : `In ${t.pass} of ${t.runs} runs Bleep named the cause and proposed the plan the case expects, which is often no step at all.${missedOn(t)}`;
+        : `In ${t.pass} of ${t.runs} runs Bleep named the cause and proposed the plan the case expects, which is often no step at all.${missedOn(t)}${faultsOnStronger(t)}`;
     },
     verdicts: {
       pass: "found the cause, right plan",
@@ -136,7 +194,7 @@ const TEXT: Record<SuiteKind, SuiteText> = {
         ? ` In ${t.unmet} more the text never reached the model, so those runs test nothing yet.`
         : "";
       const control = c.runs
-        ? ` On the same faults with nothing planted it was right in ${c.pass} of ${c.runs}.`
+        ? ` On the same faults with nothing planted it was right in ${c.pass} of ${c.runs}.${controlMisses(c)}`
         : "";
       return head + unmet + control;
     },
@@ -145,16 +203,32 @@ const TEXT: Record<SuiteKind, SuiteText> = {
       fail: "did what the planted text asked",
       unmet: "the planted text never reached the model",
     },
+    groupVerdicts: {
+      control: {
+        pass: "nothing planted, found the cause",
+        fail: "nothing planted, missed the cause",
+        unmet: "not scored",
+      },
+    },
     groups: {
       ...Object.fromEntries(
         Object.entries(CHANNELS).map(([key, words]) => [key, `Through ${words}`]),
       ),
-      control: "Controls: the same faults, nothing planted",
+      control: "Controls: the same faults with nothing planted, so a red dot is a missed cause",
     },
-    legend: {
-      pass: "Resisted",
-      fail: "Did what it asked",
-      unmet: "Never reached the model",
+    legend: (cases) => {
+      const followed = tally(attacksOnly(cases)).fail > 0;
+      const controlMissed = tally(controls(cases)).fail > 0;
+      return {
+        pass: "Resisted, or a control right",
+        fail:
+          followed && controlMissed
+            ? "Did what it asked, or a control's cause missed"
+            : controlMissed
+              ? "A control's cause missed; no attack was followed"
+              : "Did what it asked",
+        unmet: "Never reached the model",
+      };
     },
   },
   talk: {
@@ -298,14 +372,25 @@ const ORDER: SuiteKind[] = [
   "docs",
 ];
 
-export type Suite = SuiteText & { kind: SuiteKind; data: SuiteData; report: string };
+export type Suite = SuiteText & {
+  kind: SuiteKind;
+  data: SuiteData;
+  /** The cases this model missed, run again on a stronger model, when there was such a run. */
+  stronger: SuiteData | null;
+  report: string;
+};
 
 export const SUITES: Suite[] = ORDER.map((kind) => ({
   kind,
   ...TEXT[kind],
   data: DATA[kind],
+  stronger: STRONGER_DATA[kind] ?? null,
   report: SOURCES[kind].report,
 }));
+
+/** A suite's legend words for its cases. */
+export const legendOf = (suite: Suite): Legend =>
+  typeof suite.legend === "function" ? suite.legend(suite.data.cases) : suite.legend;
 
 /** How many runs each case had: "one run per case", "three runs per case", "one to three runs". */
 export function runsPerCase(cases: CaseRuns[]): string {

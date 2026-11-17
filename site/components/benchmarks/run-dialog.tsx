@@ -16,7 +16,7 @@ import type {
 
 import { OutcomeDot } from "./dot";
 
-export type DetailSet = SuiteKind | "round";
+export type DetailSet = SuiteKind | "round" | "faults-stronger" | "look-stronger";
 
 // Each set is its own chunk, fetched when a visitor opens one of its runs, so the page itself
 // carries only the dots.
@@ -30,6 +30,8 @@ const LOADERS: Record<DetailSet, () => Promise<{ default: unknown }>> = {
   scripted: () => import("~/lib/benchmarks/data/scripted.runs.json"),
   docs: () => import("~/lib/benchmarks/data/docs.runs.json"),
   round: () => import("~/lib/benchmarks/data/round.runs.json"),
+  "faults-stronger": () => import("~/lib/benchmarks/data/faults-stronger.runs.json"),
+  "look-stronger": () => import("~/lib/benchmarks/data/look-stronger.runs.json"),
 };
 
 /** A dot's run: where its detail is, and what the dot already says about it. */
@@ -90,7 +92,10 @@ export function RunDialogProvider({ children }: { children: ReactNode }) {
                 </h2>
                 <p className="mt-1 text-sm text-ink-2">{shown.run.subtitle}</p>
                 <p className="mt-2 flex items-center gap-2 text-sm font-bold">
-                  <OutcomeDot outcome={shown.run.outcome} />
+                  <OutcomeDot
+                    outcome={shown.run.outcome}
+                    stronger={shown.run.set.endsWith("-stronger")}
+                  />
                   {shown.run.verdict}
                 </p>
               </div>
