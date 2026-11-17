@@ -1,6 +1,7 @@
 import attacksData from "./data/attacks.json";
 import docsData from "./data/docs.json";
 import faultsData from "./data/faults.json";
+import lookStrongerData from "./data/look-stronger.json";
 import lookData from "./data/look.json";
 import loopbackData from "./data/loopback.json";
 import recoveryData from "./data/recovery.json";
@@ -32,6 +33,30 @@ export function listed(items: string[]): string {
 }
 
 const capitalised = (text: string) => text[0].toUpperCase() + text.slice(1);
+
+/** Why a look case still misses on the stronger model, read by hand in the showcase report. */
+const LOOK_SCORING: Record<string, string> = {
+  "coolify-healthy-no-url":
+    'both models answered rightly that nothing was wrong, and the check counted their "not a failure" as a wrong word',
+};
+
+/** What the stronger model did on the look cases the model under test missed. */
+function lookOnStronger(t: Tally): string {
+  const stronger = lookStrongerData as SuiteData;
+  const tried = stronger.cases.filter((c) => t.missed.includes(c.name));
+  if (tried.length === 0) return "";
+  const fixed = tried.filter((c) => c.runs.every((run) => run === "pass"));
+  const still = tried.filter((c) => !fixed.includes(c));
+  const runs = fixed.reduce((sum, c) => sum + c.runs.length, 0);
+  const fixedLine = fixed.length
+    ? ` A stronger model, ${modelName(stronger.model)}, said it right in all ${runs} runs of ${listed(fixed.map((c) => c.name))}, where ${modelName((lookData as SuiteData).model)} found the cause but would not commit to it.`
+    : "";
+  const stillLine = still
+    .filter((c) => LOOK_SCORING[c.name])
+    .map((c) => ` On ${c.name} ${LOOK_SCORING[c.name]}.`)
+    .join("");
+  return fixedLine + stillLine;
+}
 
 const missedOn = (t: Tally) =>
   t.missed.length === 0 ? "" : ` It missed on ${listed(t.missed.map((name) => `${name}`))}.`;
@@ -162,7 +187,7 @@ const TEXT: Record<SuiteKind, SuiteText> = {
     },
     answer: (cases) => {
       const t = tally(cases);
-      return `Bleep reads every container's logs and checks every URL before it answers, and said rightly whether the service was healthy in ${t.pass} of ${t.runs} runs.${missedOn(t)}`;
+      return `Bleep reads every container's logs and checks every URL before it answers, and said rightly whether the service was healthy in ${t.pass} of ${t.runs} runs.${missedOn(t)}${lookOnStronger(t)}`;
     },
     verdicts: { pass: "said it right", fail: "missed", unmet: "not scored" },
     legend: { pass: "Said it right", fail: "Missed" },
@@ -236,7 +261,7 @@ const TEXT: Record<SuiteKind, SuiteText> = {
     name: "Docs search",
     question: "Does it find the right page in the docs?",
     checks: (cases) =>
-      `${capitalised(inWords(cases.length))} questions about Docker, each with the doc page that answers it.`,
+      `${capitalised(inWords(cases.length))} questions about Docker in English and German, each with the doc page that answers it.`,
     result: (cases) => {
       const t = tally(cases);
       return `right page in the top five for ${t.pass} of ${t.runs}`;

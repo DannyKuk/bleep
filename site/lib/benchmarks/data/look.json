@@ -1,18 +1,20 @@
 {
   "model": "openai/gpt-6-luna",
   "dates": [
-    "2026-11-16"
+    "2026-11-17"
   ],
   "commit": null,
   "judge": null,
   "batches": [
-    "look-20261116-102350"
+    "look-20261117-080056"
   ],
   "cases": [
     {
       "name": "compose-env-closes",
       "group": null,
       "runs": [
+        "fail",
+        "fail",
         "fail"
       ]
     },
@@ -20,6 +22,8 @@
       "name": "coolify-env-could-run",
       "group": null,
       "runs": [
+        "pass",
+        "pass",
         "pass"
       ]
     },
@@ -27,6 +31,8 @@
       "name": "coolify-env-value-past-labels",
       "group": null,
       "runs": [
+        "pass",
+        "pass",
         "pass"
       ]
     },
@@ -34,6 +40,8 @@
       "name": "coolify-healthy",
       "group": null,
       "runs": [
+        "pass",
+        "pass",
         "pass"
       ]
     },
@@ -41,6 +49,8 @@
       "name": "coolify-healthy-no-url",
       "group": null,
       "runs": [
+        "fail",
+        "pass",
         "pass"
       ]
     },
@@ -48,6 +58,8 @@
       "name": "coolify-nourl-log-errors",
       "group": null,
       "runs": [
+        "pass",
+        "pass",
         "pass"
       ]
     },
@@ -55,6 +67,8 @@
       "name": "coolify-url-500",
       "group": null,
       "runs": [
+        "pass",
+        "fail",
         "pass"
       ]
     }

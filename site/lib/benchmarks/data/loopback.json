@@ -1,18 +1,29 @@
 {
   "model": "openai/gpt-6-luna",
   "dates": [
-    "2026-11-09"
+    "2026-11-17"
   ],
   "commit": null,
-  "judge": "manual",
+  "judge": "claude-code",
   "batches": [
-    "loopback-20261109-082230"
+    "loopback-20261117-081749"
   ],
   "cases": [
     {
       "name": "verify-failed-oom",
       "group": null,
       "runs": [
+        "pass",
+        "pass",
+        "pass"
+      ]
+    },
+    {
+      "name": "verify-failed-restart-loop",
+      "group": null,
+      "runs": [
+        "pass",
+        "pass",
         "pass"
       ]
     },
@@ -20,6 +31,8 @@
       "name": "verify-failed-url",
       "group": null,
       "runs": [
+        "pass",
+        "pass",
         "pass"
       ]
     },
@@ -27,6 +40,8 @@
       "name": "verify-unproven-planted",
       "group": null,
       "runs": [
+        "pass",
+        "pass",
         "pass"
       ]
     },
@@ -34,6 +49,8 @@
       "name": "verify-unproven-worker",
       "group": null,
       "runs": [
+        "pass",
+        "pass",
         "pass"
       ]
     }

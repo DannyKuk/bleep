@@ -258,5 +258,148 @@
       "daemon-troubleshoot"
     ],
     "rank": 1
+  },
+  "resource-constraints (2)/1": {
+    "type": "search",
+    "question": "Wie begrenze ich den Arbeitsspeicher eines Containers, und was passiert, wenn er das Limit überschreitet?",
+    "page": "resource-constraints",
+    "found": [
+      "running-containers",
+      "resource-constraints",
+      "compose-deploy",
+      "cli-events",
+      "compose-services"
+    ],
+    "rank": 2
+  },
+  "logging-json-file (2)/1": {
+    "type": "search",
+    "question": "Die Logdateien der Container füllen die Festplatte. Wie stelle ich für den json-file-Treiber eine Rotation nach Größe ein?",
+    "page": "logging-json-file",
+    "found": [
+      "logging-json-file",
+      "cli-events",
+      "cli-logs",
+      "running-containers",
+      "logging-configure"
+    ],
+    "rank": 1
+  },
+  "pruning (2)/1": {
+    "type": "search",
+    "question": "Wie entferne ich ungenutzte Images, gestoppte Container und den Build-Cache, um Speicherplatz freizugeben?",
+    "page": "pruning",
+    "found": [
+      "pruning",
+      "running-containers",
+      "cli-system-df",
+      "cli-events",
+      "resource-constraints"
+    ],
+    "rank": 1
+  },
+  "port-publishing (2)/1": {
+    "type": "search",
+    "question": "Ein veröffentlichter Port ist von anderen Rechnern im Netzwerk aus nicht erreichbar. An welche Adressen bindet Docker ihn?",
+    "page": "port-publishing",
+    "found": [
+      "cli-events",
+      "compose-services",
+      "port-publishing",
+      "networking",
+      "network-bridge"
+    ],
+    "rank": 3
+  },
+  "volumes (2)/1": {
+    "type": "search",
+    "question": "Die Datenbank hat nach dem Neuerstellen ihres Containers alle Daten verloren. Wie bleiben die Daten in einem benannten Volume erhalten?",
+    "page": "volumes",
+    "found": [
+      "cli-events",
+      "cli-logs",
+      "volumes",
+      "cli-system-df",
+      "compose-services"
+    ],
+    "rank": 3
+  },
+  "resource-constraints (3)/1": {
+    "type": "search",
+    "question": "Der Container wurde vom Kernel beendet, docker inspect zeigt \"OOMKilled\": true und \"ExitCode\": 137. Was ist da passiert?",
+    "page": "resource-constraints",
+    "found": [
+      "running-containers",
+      "daemon-troubleshoot",
+      "compose-services",
+      "resource-constraints",
+      "daemon-logs"
+    ],
+    "rank": 4
+  },
+  "compose-startup-order (2)/1": {
+    "type": "search",
+    "question": "docker compose up bricht ab mit \"dependency failed to start: container shop-db is unhealthy\". Wie wartet ein Dienst richtig auf die Datenbank?",
+    "page": "compose-startup-order",
+    "found": [
+      "compose-services",
+      "compose-startup-order",
+      "running-containers",
+      "cli-events",
+      "compose-deploy"
+    ],
+    "rank": 2
+  },
+  "restart-policies (3)/1": {
+    "type": "search",
+    "question": "docker ps zeigt seit Minuten \"Restarting (1) 5 seconds ago\" für shop-worker. Nach welchen Regeln startet Docker den Container neu?",
+    "page": "restart-policies",
+    "found": [
+      "cli-events",
+      "restart-policies",
+      "compose-services",
+      "daemon-logs",
+      "bind-mounts"
+    ],
+    "rank": 2
+  },
+  "dockerfile-healthcheck (2)/1": {
+    "type": "search",
+    "question": "Der Health Check meldet \"Status\": \"unhealthy\", \"FailingStreak\": 3. Was bedeuten interval, timeout und retries?",
+    "page": "dockerfile-healthcheck",
+    "found": [
+      "dockerfile-healthcheck",
+      "running-containers",
+      "compose-services",
+      "compose-startup-order",
+      "cli-events"
+    ],
+    "rank": 1
+  },
+  "logging-json-file (3)/1": {
+    "type": "search",
+    "question": "Docker meldet \"write /var/lib/docker/containers/4f2a/4f2a-json.log: no space left on device\". Wie begrenze ich die Größe der Container-Logs?",
+    "page": "logging-json-file",
+    "found": [
+      "logging-json-file",
+      "logging-dual",
+      "daemon-logs",
+      "cli-system-df",
+      "logging-configure"
+    ],
+    "rank": 1
+  },
+  "compose-startup-order (3)/1": {
+    "type": "search",
+    "question": "shop-web logs \"FEHLER: Verbindung zu shop-db:5432 abgelehnt\" right after it starts, while the database is still starting. How do I make it wait?",
+    "page": "compose-startup-order",
+    "found": [
+      "cli-events",
+      "compose-startup-order",
+      "daemon-logs",
+      "running-containers",
+      "cli-logs"
+    ],
+    "rank": 2
   }
 }

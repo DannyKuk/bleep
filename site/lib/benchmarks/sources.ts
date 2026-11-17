@@ -5,45 +5,64 @@ import type { SuiteKind } from "./extract";
  * and running `npm test -- -u lib/benchmarks`, which rewrites `data/` from the raw files. */
 export type Source = { kind: SuiteKind; batches: string[]; report: string };
 
+/** The look cases the model under test missed, run again on a stronger model: it shows where the
+ * limit is the model's and where it is the case's scoring. */
+export const LOOK_STRONGER: Source = {
+  kind: "look",
+  batches: ["look-20261117-083758"],
+  report: "docs/evals/showcase-2026-11-17.md",
+};
+
 export const SOURCES: Record<SuiteKind, Source> = {
   faults: {
     kind: "faults",
-    batches: ["scenarios-20261109-075810"],
-    report: "docs/evals/scenarios-2026-11-09.md",
+    batches: [
+      "scenarios-20261117-082059-e1",
+      "scenarios-20261117-082059-e2",
+      "scenarios-20261117-082059-e3",
+      "scenarios-20261117-082059-e4",
+      "scenarios-20261117-082723",
+    ],
+    report: "docs/evals/showcase-2026-11-17.md",
   },
   attacks: {
     kind: "attacks",
-    batches: ["injection-20261106-091504"],
-    report: "docs/evals/planted-markers-2026-11-06.md",
+    batches: [
+      "injection-20261117-083748-e1",
+      "injection-20261117-084044-e2",
+      "injection-20261117-083802-e3",
+      "injection-20261117-084050-e4",
+    ],
+    report: "docs/evals/showcase-2026-11-17.md",
   },
   talk: {
     kind: "talk",
-    batches: ["talk-20261113-121701"],
-    report: "docs/evals/talk-links-2026-11-13.md",
+    batches: ["talk-20261117-075651"],
+    report: "docs/evals/showcase-2026-11-17.md",
   },
   look: {
     kind: "look",
-    batches: ["look-20261116-102350"],
-    report: "docs/evals/tool-arg-texts-2026-11-16.md",
+    batches: ["look-20261117-080056"],
+    report: "docs/evals/showcase-2026-11-17.md",
   },
   loopback: {
     kind: "loopback",
-    batches: ["loopback-20261109-082230"],
-    report: "docs/evals/scenarios-2026-11-09.md",
+    batches: ["loopback-20261117-081749"],
+    report: "docs/evals/showcase-2026-11-17.md",
   },
   recovery: {
     kind: "recovery",
-    batches: ["recovery-20261104-124904"],
-    report: "docs/evals/recovery-line-2026-11-04.md",
+    batches: ["recovery-20261117-075614"],
+    report: "docs/evals/showcase-2026-11-17.md",
   },
   scripted: {
     kind: "scripted",
-    batches: ["scripted-propose-20261116-102720"],
-    report: "docs/evals/tool-arg-texts-2026-11-16.md",
+    batches: ["scripted-propose-20261117-081302"],
+    report: "docs/evals/showcase-2026-11-17.md",
   },
   docs: {
     kind: "docs",
-    batches: ["knowledge-20261103-203626"],
-    report: "docs/evals/knowledge-2026-11-03.md",
+    batches: ["knowledge-20261117-075613", "knowledge-20261117-082018-multilingual"],
+    report: "docs/evals/showcase-2026-11-17.md",
   },
 };

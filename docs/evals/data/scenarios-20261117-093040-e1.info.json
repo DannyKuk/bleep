@@ -1,0 +1,63 @@
+{
+  "started_at": "2026-11-17T09:30:40.659994Z",
+  "finished_at": "2026-11-17T09:37:12.694042Z",
+  "model": "claude-haiku-5-5",
+  "provider": "anthropic",
+  "judge": "claude-code",
+  "repeat": 3,
+  "scenarios": [
+    {
+      "id": "hung",
+      "fault": "hung",
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-web hangs: the container runs but answers no request, so its health check times out.",
+        "category": "code",
+        "action": {
+          "kind": "act",
+          "steps": [
+            {
+              "action": "docker.restart",
+              "target": "shop-web",
+              "tool": null,
+              "arguments": null,
+              "params": null
+            }
+          ],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.stop"
+        ],
+        "must_name": [],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": false,
+      "scripted": null,
+      "coolify": null
+    }
+  ],
+  "commit": "0d2571eb",
+  "command": "uv run --group evals python -m evals.parallel --engines 1 --scenarios hung --repeat 3 --model claude-haiku-5-5 --judge claude-code",
+  "reset_shop": true,
+  "knowledge": true,
+  "repo_docs": [
+    "DannyKuk/bleep: demo/shop/docs/deploy.md",
+    "DannyKuk/bleep: demo/shop/docs/services.md"
+  ],
+  "timeout_s": null,
+  "raw": "data/scenarios-20261117-093040-e1.jsonl",
+  "report": "docs/evals/scenarios-2026-11-17-3.md",
+  "batches": [],
+  "grader": null,
+  "grades": null
+}
