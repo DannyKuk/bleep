@@ -52,27 +52,28 @@ How Bleep tells a human about an incident and takes their answer from Telegram (
 
 What the person writes in Bleep's chat is answered from Bleep's own state, in their words and language. The agreed design, with example chats, is [`docs/superpowers/specs/2026-11-09-talk-to-bleep-design.md`](../superpowers/specs/2026-11-09-talk-to-bleep-design.md); it is built in parts: (a) answering, #401; (b) the confirmed actions, #402; (c) a look on request, #403.
 
-A message on its own changes nothing. Only a Yes pressed on an offer that code checked does, and the two ways that lead into the incident graph end at its own Approve again (#666):
+A message on its own changes nothing: Bleep answers in words, or offers one thing to do, and only your Yes runs it (#666).
 
 ```mermaid
 flowchart TD
-    M["message<br/>Telegram or the panel"] --> S["snapshot<br/>talk.state, by code"]
-    S --> R["read<br/>one cheap-model call,<br/>every input untrusted"]
-    R -->|error, timeout, budget spent| F["I couldn't read that"]
-    R -->|question| Q["answer<br/>links only to watched URLs"]
-    R -->|secret| K["never shows a secret"]
-    R -->|refused change, unclear,<br/>empty answer| L["fixed line"]
-    R -->|action| C["check against the snapshot<br/>offers.check, looks.look_offer,<br/>Actions.bind"]
-    F & L -->|about an incident<br/>whose plan waits| O
-    C -->|fails| W["says why"]
-    C -->|yes, do it| B["the plan's own buttons"]
-    C --> O["one offer, Yes or No<br/>Confirms, 10 minutes"]
-    O -->|no, late, second press| N["nothing changed"]
-    O -->|yes| X["Actions.run"]
-    X --> QU["snooze, leave alone,<br/>watch again, it's expected"]
-    X -->|instruct| P["the plan gets the words<br/>approval → propose"]
-    X -->|look again| I["opens an incident<br/>gather → … → approval"]
+    M[You write to Bleep] --> R[Bleep reads it]
+    R -->|a question| A[Answers from its own state]
+    R -->|can't read it,<br/>or won't do it| L[Says so in one line]
+    R -->|something to do| C[Code checks it]
+    C -->|does not fit| W[Says why]
+    C --> O[Offers it: Yes or No]
+    O -->|No, or too late| N[Nothing changes]
+    O -->|Yes| D[Does it]
+    D -.->|a look, or your words for a plan| G[The incident graph<br/>any fix still waits for your yes]
 ```
+
+| Step | Code |
+|---|---|
+| Reads it | `talk.state.BleepState` builds the snapshot; one cheap-model call reads the kind, every input wrapped as untrusted (`talk.conversation.Talk`) |
+| Says so in one line | a fixed line for a read that failed, an unclear message, a refused change or a secret; about an incident whose plan waits, an offer to send your words to that plan instead (`Talk._fallback`) |
+| Code checks it | `talk.offers.check`, `talk.looks.look_offer`, `talk.actions.Actions.bind`; "yes, do it" shows the plan's own buttons instead of an offer |
+| Offers it | one offer, kept 10 minutes (`talk.confirms.Confirms`); a second press changes nothing too |
+| Does it | `talk.actions.Actions.run`: snooze, leave alone, watch again, it's expected, an instruction to the plan, a look |
 
 - **One part answers for both surfaces: `talk/`** (`talk.conversation.Talk.reply(text, incident_id, turns)` returns a `TalkReply`: `kind`, `answer`, the `action` the model read, the incident, and the `offer` once code checked the action, #402). The Telegram bot calls it through `notify`, the dashboard's panel through `api` (`POST /api/talk/messages`, #391, docs/design/app.md). `talk` reads the watcher's health through `talk.state.HealthSource`, a Protocol `wiring` fills with `watcher.overview.Overview`, the views the dashboard's `/api/hosts` and `/api/services` read too, so a chat answer never judges a service differently from the page. Reason: one conversation brain, and `talk` sits below `watcher` in the dependency list (#390, #401).
 - **One cheap-model call per message, structured, with a cost cap of its own.** The `cheap` role through `llm.structured.invoke_structured` (JSON fallback for a model without tools), under `ModelGuard` at 30 s and one retry (the budgets' model timeout when it is shorter), and the whole reading cut off after 60 s. Each call is counted in the usage ledger under `talk` (`llm.usage.CHAT_USAGE`) against the chat's own daily cap, `chat_daily_cost_usd` ($0.20 by default; set through the `budgets` section of `PUT /api/settings` with the dev panel on, whose budget form lists its fields by hand and does not show this one yet); chat spending never counts against `daily_cost_usd`, which the incidents and the recovery lines share, so a chatty day cannot stop an investigation. A spent chat cap answers "I've used today's budget for chat answers, …" without a call. Reason: a chat answer must not cost an incident's budget or hold the person long (#401).
