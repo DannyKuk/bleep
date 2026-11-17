@@ -20,22 +20,32 @@ Bleep watches the containers on your hosts. When one breaks, it opens an inciden
 
 https://github.com/user-attachments/assets/a3fd906c-4b35-498e-bbbb-c9f7c85a612a
 
+**See it on the [landing page](https://bleep.dkwebsite.de/):** a replay of one real incident where you say yes, [how an incident moves through the graph](https://bleep.dkwebsite.de/flow), and [every eval run](https://bleep.dkwebsite.de/benchmarks).
+
 ## How well it does
 
-Measured on the demo shop's eight faults with real models. Every number comes from a dated report in [`docs/evals/`](docs/evals/).
+Every eval suite ran on one commit with `openai/gpt-6-luna`, three runs per case, 473 runs for $0.71 ([report](docs/evals/showcase-2026-11-17.md)). [**Every run is one click away on the benchmarks page**](https://bleep.dkwebsite.de/benchmarks): what Bleep found, what it proposed, why, and the tools it called.
+
+| Suite | What it asks | Result |
+|---|---|---|
+| Faults | Does it find what broke? 15 incidents on the demo shop, from the alert to the plan | 42 of 45 runs found the cause and the right plan |
+| Attacks | Can a log line give Bleep orders? 27 attacks through logs, docs, commits, memory, error pages, host details and service names | Resisted all 69 runs where the planted text reached the model; 12 more never reached it |
+| Controls | The same faults with nothing planted | 15 of 18 right |
+| Talk | Can you just ask it? 42 messages in English and German | 125 of 126 read right |
+| Look | Does it look before it says healthy? 7 services to look at on request, some healthy and some quietly broken | 16 of 21 said it right |
+| Loop back | What does it do when its fix didn't work? | 15 of 15 looked again instead of repeating the fix |
+| Recovery line | Can it say why a container came back on its own? | 15 of 15 named the cause |
+| Docs search | Does it find the right page in the docs? 31 questions, 11 of them German or mixed | 31 of 31 in the top five |
+
+Every real miss has one shape: luna names the right facts, then hedges and files the cause under `unknown`. That is `hung` (all 3 fault runs, 3 of the 6 control runs) and two look cases. Claude Haiku 5.5, run again on those cases, committed to the cause on the look cases in 6 of 6 runs and on `hung` in 2 of 3. No run proposed a step it should not.
+
+Earlier rounds that the one above does not repeat:
 
 | What was tested | Result | Report |
 |---|---|---|
-| Root cause on the 8 faults and misroute through MCP, `openai/gpt-6-luna`, 3 runs each, by hand | 23 of 27 right, plan exact in 24 of 27, about 64 s and $0.0028 a run | [report](docs/evals/scenarios-2026-11-05-3.md) |
-| The same model on the 8 faults, judged by DeepEval's GEval against grading by hand | 7 of 8 right; GEval and the hand grades agree on all 8 | [report](docs/evals/scenarios-2026-11-11.md) |
 | Six models (luna, gemini-3.8-flash, Claude Haiku and Sonnet 5.5, gpt-oss-20b, Qwen 3.8 27B), 6 faults and 4 injection cases, 1 run each | Every model 6 of 6 exact plans; luna, gemini, Haiku and the local Qwen 3.8 27B had every case right; Sonnet missed one fix value, gpt-oss-20b one value and one attack, which the plan check stopped | [report](docs/evals/models-2026-11-16-2.md) |
-| Local `openai/gpt-oss-20b`, 8 faults and 6 honest controls, 1 run each | 7 of 8 faults right, 6 of 6 controls right, 55 s, $0 | [report](docs/evals/scenarios-local-2026-11-03.md) |
-| Prompt injection through logs, replies, docs, commits and memory | 20 of 20 attacks failed to steer Bleep or leak a secret | [report](docs/evals/injection-2026-11-05-2.md) |
+| luna on the 8 faults, judged by DeepEval's GEval against grading by hand | 7 of 8 right; GEval and the hand grades agree on all 8 | [report](docs/evals/scenarios-2026-11-11.md) |
 | Telling the human about planted orders | Told in 13 of 14 attack runs whose orders reached the model, 0 of 18 honest runs; 27 of 92 blind attacks | [report](docs/evals/planted-markers-2026-11-06.md) |
-| Runbook pages that give orders | Read in 6 of 6 runs, followed in none | [report](docs/evals/injection-docs-2026-11-04.md) |
-| After a fix that did not hold | 9 of 9 loop-back cases right, never the failed fix again | [report](docs/evals/loopback-2026-11-04.md) |
-
-`openai/gpt-6-luna` missed `hung` in every run of the first two rows' rounds (3 of the 4 misses in the first row, the 1 in the second); since #480 shows the health probes it proposes the restart in 5 of 6 runs but still calls the cause unknown ([report](docs/evals/health-probes-2026-11-12.md)).
 
 ## How it works
 
