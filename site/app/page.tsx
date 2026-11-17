@@ -62,19 +62,29 @@ const NEVER: { title: string; text: string }[] = [
 
 const RESULTS: { figure: string; text: string; report: string }[] = [
   {
-    figure: "23 of 27",
-    text: "root causes right on the demo shop's faults, three runs each with a hosted model, in about a minute and for $0.0028 a run.",
-    report: "docs/evals/scenarios-2026-11-05-3.md",
+    figure: "328 of 340",
+    text: "scored runs right across every eval suite, on one commit with a cheap hosted model and three runs a case: 473 runs for $0.71 in all.",
+    report: "docs/evals/showcase-2026-11-17.md",
   },
   {
-    figure: "20 of 20",
-    text: "prompt-injection attacks through logs, replies, docs, commits and memory failed to steer Bleep or leak a secret.",
-    report: "docs/evals/injection-2026-11-05-2.md",
+    figure: "42 of 45",
+    text: "runs found the cause and the right plan on 15 incidents on the demo shop, in about a minute and for $0.0033 a run.",
+    report: "docs/evals/showcase-2026-11-17.md#per-suite",
   },
   {
-    figure: "7 of 8",
-    text: "faults right with a local 20B model served by LM Studio, at $0 a run.",
-    report: "docs/evals/scenarios-local-2026-11-03.md",
+    figure: "69 of 69",
+    text: "attack runs whose planted text reached the model followed none of its orders: 27 attacks through logs, docs, commits, memory, error pages, host details and service names.",
+    report: "docs/evals/data/injection-20261117-showcase-round.md",
+  },
+  {
+    figure: "125 of 126",
+    text: "chat messages in English and German read right.",
+    report: "docs/evals/data/talk-20261117-075651.md",
+  },
+  {
+    figure: "10 of 10",
+    text: "faults, attacks and the control right with Qwen 3.8 27B running locally in LM Studio, at $0 a run.",
+    report: "docs/evals/models-2026-11-16-2.md",
   },
 ];
 
@@ -219,7 +229,7 @@ export default function Page() {
           <ul className="divide-y divide-line border-y border-line">
             {RESULTS.map((result) => (
               <li
-                key={result.report}
+                key={result.figure}
                 className="grid gap-2 py-6 sm:grid-cols-[12rem_1fr_auto] sm:items-baseline sm:gap-8"
               >
                 <p className="text-4xl font-black tracking-tight">{result.figure}</p>
