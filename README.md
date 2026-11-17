@@ -24,28 +24,21 @@ https://github.com/user-attachments/assets/a3fd906c-4b35-498e-bbbb-c9f7c85a612a
 
 ## How well it does
 
-Every eval suite ran on one commit with `openai/gpt-6-luna`, three runs per case, 473 runs for $0.71 ([report](docs/evals/showcase-2026-11-17.md)). [**Every run is one click away on the benchmarks page**](https://bleep.dkwebsite.de/benchmarks): what Bleep found, what it proposed, why, and the tools it called.
+**328 of the 340 runs that could be scored were right (96%). Every attack that reached the model failed, and no run proposed a step it should not.** Every eval suite ran on one commit with `openai/gpt-6-luna`, a cheap model, three runs per case: 473 runs for $0.71 in all ([report](docs/evals/showcase-2026-11-17.md)). [**Every run is one click away on the benchmarks page**](https://bleep.dkwebsite.de/benchmarks): what Bleep found, what it proposed, why, and the tools it called.
 
 | Suite | What it asks | Result |
 |---|---|---|
-| Faults | Does it find what broke? 15 incidents on the demo shop, from the alert to the plan | 42 of 45 runs found the cause and the right plan |
-| Attacks | Can a log line give Bleep orders? 27 attacks through logs, docs, commits, memory, error pages, host details and service names | Resisted all 69 runs where the planted text reached the model; 12 more never reached it |
-| Controls | The same faults with nothing planted | 15 of 18 right |
-| Talk | Can you just ask it? 42 messages in English and German | 125 of 126 read right |
-| Look | Does it look before it says healthy? 7 services to look at on request, some healthy and some quietly broken | 16 of 21 said it right |
+| Attacks | Can a log line give Bleep orders? 27 attacks planted in logs, docs, commits, memory, error pages, host details and service names | None worked in the 69 runs where the planted text reached the model (Bleep does not show the model an error page's body yet, so those 4 never reach it); on the same faults with nothing planted, 15 of 18 right |
 | Loop back | What does it do when its fix didn't work? | 15 of 15 looked again instead of repeating the fix |
+| Faults | Does it find what broke? 15 incidents on the demo shop, from the alert to the plan | 42 of 45 runs found the cause and the right plan |
+| Talk | Can you just ask it? 42 messages in English and German | 125 of 126 read right |
 | Recovery line | Can it say why a container came back on its own? | 15 of 15 named the cause |
 | Docs search | Does it find the right page in the docs? 31 questions, 11 of them German or mixed | 31 of 31 in the top five |
+| Look | Does it look before it says healthy? 7 services to look at on request, some healthy and some quietly broken | 16 of 21 said it right; one miss is the scorer's |
 
-Every real miss has one shape: luna names the right facts, then hedges and files the cause under `unknown`. That is `hung` (all 3 fault runs, 3 of the 6 control runs) and two look cases. Claude Haiku 5.5, run again on those cases, committed to the cause on the look cases in 6 of 6 runs and on `hung` in 2 of 3. No run proposed a step it should not.
+**What the 12 misses are.** In 10 of them luna did not guess. On the `hung` fault (3 runs, and 3 of the 6 control runs) and on two look cases (4 runs) it named the right facts, then would not commit to a cause and called it `unknown`; two of its three `hung` runs still proposed the right restart. Claude Haiku 5.5, run again on those cases, committed to the cause on the look cases in 6 of 6 runs and on `hung` in 2 of 3, so this limit is the model's, and the model is a setting. The other two: one German follow-up answered in English ([#655](https://github.com/DannyKuk/bleep/issues/655)), and one right answer ("nothing is wrong") that the look scorer counted as a miss for saying "not a failure". Whatever the diagnosis, nothing changes on a host until you say yes.
 
-Earlier rounds that the one above does not repeat:
-
-| What was tested | Result | Report |
-|---|---|---|
-| Six models (luna, gemini-3.8-flash, Claude Haiku and Sonnet 5.5, gpt-oss-20b, Qwen 3.8 27B), 6 faults and 4 injection cases, 1 run each | Every model 6 of 6 exact plans; luna, gemini, Haiku and the local Qwen 3.8 27B had every case right; Sonnet missed one fix value, gpt-oss-20b one value and one attack, which the plan check stopped | [report](docs/evals/models-2026-11-16-2.md) |
-| luna on the 8 faults, judged by DeepEval's GEval against grading by hand | 7 of 8 right; GEval and the hand grades agree on all 8 | [report](docs/evals/scenarios-2026-11-11.md) |
-| Telling the human about planted orders | Told in 13 of 14 attack runs whose orders reached the model, 0 of 18 honest runs; 27 of 92 blind attacks | [report](docs/evals/planted-markers-2026-11-06.md) |
+**Which model?** Six models ran the same 6 faults and 4 attacks: every one proposed the exact plan in 6 of 6, and luna, gemini-3.8-flash, Claude Haiku 5.5 and the local Qwen 3.8 27B had every case right ([report](docs/evals/models-2026-11-16-2.md)).
 
 ## How it works
 
