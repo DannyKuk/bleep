@@ -1,0 +1,134 @@
+{
+  "started_at": "2026-11-17T08:27:23.899866Z",
+  "finished_at": "2026-11-17T08:29:18.319298Z",
+  "model": "openai/gpt-6-luna",
+  "provider": "openrouter",
+  "judge": "claude-code",
+  "repeat": 3,
+  "scenarios": [
+    {
+      "id": "coolify-set-env",
+      "fault": null,
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/store0uuid0000000000000a1"
+      },
+      "expected": {
+        "root_cause": "storefront-web exits at startup and keeps being restarted because the setting SESSION_TTL_S, which its latest deployment (the session handling moved into its own module) requires, is not set in the application's environment in Coolify.",
+        "category": "config",
+        "action": {
+          "kind": "act",
+          "steps": [
+            {
+              "action": "coolify.set_env",
+              "target": "storefront",
+              "tool": null,
+              "arguments": null,
+              "params": {
+                "key": "SESSION_TTL_S"
+              }
+            },
+            {
+              "action": "coolify.redeploy",
+              "target": "storefront",
+              "tool": null,
+              "arguments": null,
+              "params": null
+            }
+          ],
+          "ordered": true
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ],
+        "must_name": [
+          "SESSION_TTL_S"
+        ],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": false,
+      "scripted": {
+        "project": "storefront",
+        "containers": [
+          {
+            "name": "storefront-web",
+            "id": null,
+            "project": null,
+            "image": "store0uuid0000000000000a1:7c2e41d",
+            "state": "restarting",
+            "health": "none",
+            "restart_policy": "unless-stopped",
+            "restart_count": 23,
+            "exit_code": 1,
+            "started_minutes_ago": 1.0,
+            "env": [
+              "DATABASE_URL=postgres://storefront@db.internal:5432/storefront",
+              "NODE_ENV=production",
+              "PORT=3000"
+            ],
+            "mem_limit_mib": null,
+            "mem_usage_mib": 50.0,
+            "oom_killed": false,
+            "logs": "INFO  storefront 3.4.0 starting\nINFO  database connection ok\nERROR config: SESSION_TTL_S is not set; the session module needs a number of seconds (SESSION_TTL_S=3600 is its default for a new install)\nFATAL startup aborted, exiting with code 1\n",
+            "labels": {},
+            "after": null
+          }
+        ],
+        "events": [
+          {
+            "minutes_ago": 4.0,
+            "container": "storefront-web",
+            "action": "die"
+          },
+          {
+            "minutes_ago": 3.0,
+            "container": "storefront-web",
+            "action": "die"
+          }
+        ],
+        "signals": [
+          {
+            "kind": "container_died",
+            "container": "storefront-web",
+            "minutes_ago": 4.0,
+            "detail": {
+              "exit_code": 1,
+              "restart_policy": "unless-stopped"
+            }
+          },
+          {
+            "kind": "restart_loop",
+            "container": "storefront-web",
+            "minutes_ago": 3.0,
+            "detail": {
+              "deaths": 5,
+              "window_s": 600
+            }
+          }
+        ],
+        "rules": [],
+        "protected": []
+      },
+      "coolify": "storefront"
+    }
+  ],
+  "commit": "0d2571eb",
+  "command": "uv run --group evals python -m evals.run --judge claude-code --only coolify-set-env --repeat 3",
+  "reset_shop": false,
+  "knowledge": true,
+  "repo_docs": [],
+  "timeout_s": null,
+  "raw": "../../data/evals/scenarios-20261117-082723.jsonl",
+  "report": "docs/evals/scenarios-2026-11-17.md",
+  "batches": [],
+  "grader": null,
+  "grades": null
+}

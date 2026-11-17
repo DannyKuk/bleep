@@ -1,0 +1,137 @@
+{
+  "started_at": "2026-11-17T08:20:59.351958Z",
+  "finished_at": "2026-11-17T08:37:37.610069Z",
+  "model": "openai/gpt-6-luna",
+  "provider": "openrouter",
+  "judge": "claude-code",
+  "repeat": 3,
+  "scenarios": [
+    {
+      "id": "bad-deploy-old",
+      "fault": "bad-deploy",
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-web version 2 reads the column price_cents, which the database does not have (its migration never ran), so /api/items fails with 500 while shop-web stays healthy.",
+        "category": "code",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ],
+        "must_name": [],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": "bad-deploy-old",
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": false,
+      "scripted": null,
+      "coolify": null
+    },
+    {
+      "id": "disk-full",
+      "fault": "disk-full",
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "The shop's 20 MB uploads volume is full (No space left on device), so shop-web cannot write to it and its health check fails.",
+        "category": "resource",
+        "action": {
+          "kind": "no_action",
+          "steps": [],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ],
+        "must_name": [],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": null,
+      "mcp_purpose": "",
+      "no_urls": false,
+      "scripted": null,
+      "coolify": null
+    },
+    {
+      "id": "misroute-mcp",
+      "fault": "misroute",
+      "look": false,
+      "subject": {
+        "kind": "service",
+        "host_id": "demo",
+        "service_id": "demo/compose:shop"
+      },
+      "expected": {
+        "root_cause": "shop-proxy forwards to shop-web:8001, where nothing listens (shop-web listens on 8000), so every request through the proxy gets a 502 while shop-web itself is healthy.",
+        "category": "config",
+        "action": {
+          "kind": "act",
+          "steps": [
+            {
+              "action": "mcp.call",
+              "target": "shop-proxy",
+              "tool": "caddy_reload",
+              "arguments": {
+                "container": "shop-proxy"
+              },
+              "params": null
+            }
+          ],
+          "ordered": false
+        },
+        "must_not": [
+          "docker.restart",
+          "docker.start",
+          "docker.stop"
+        ],
+        "must_name": [],
+        "must_set": {}
+      },
+      "timeout_s": 400,
+      "github": null,
+      "mcp": "caddy",
+      "mcp_purpose": "Manages the Caddy reverse proxy: shows its loaded config, reloads it, empties its cache",
+      "no_urls": false,
+      "scripted": null,
+      "coolify": null
+    }
+  ],
+  "commit": "0d2571eb",
+  "command": "uv run --group evals python -m evals.parallel --engines 4 --scenarios all --injection all --repeat 3 --model openai/gpt-6-luna --judge claude-code --label 'Showcase round'",
+  "reset_shop": true,
+  "knowledge": true,
+  "repo_docs": [
+    "DannyKuk/bleep: demo/shop/docs/deploy.md",
+    "DannyKuk/bleep: demo/shop/docs/services.md"
+  ],
+  "timeout_s": null,
+  "raw": "data/scenarios-20261117-082059-e3.jsonl",
+  "report": "docs/evals/scenarios-2026-11-17-2.md",
+  "batches": [
+    "data/scenarios-20261117-082059-e1.jsonl",
+    "data/scenarios-20261117-082059-e2.jsonl",
+    "data/scenarios-20261117-082059-e4.jsonl"
+  ],
+  "grader": null,
+  "grades": null
+}

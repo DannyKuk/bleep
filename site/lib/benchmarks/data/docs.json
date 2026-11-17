@@ -1,12 +1,13 @@
 {
   "model": null,
   "dates": [
-    "2026-11-03"
+    "2026-11-17"
   ],
   "commit": null,
   "judge": null,
   "batches": [
-    "knowledge-20261103-203626"
+    "knowledge-20261117-075613",
+    "knowledge-20261117-082018-multilingual"
   ],
   "cases": [
     {
@@ -45,6 +46,20 @@
       ]
     },
     {
+      "name": "compose-startup-order (2)",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "compose-startup-order (3)",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
       "name": "daemon-logs",
       "group": null,
       "runs": [
@@ -53,6 +68,13 @@
     },
     {
       "name": "dockerfile-healthcheck",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "dockerfile-healthcheck (2)",
       "group": null,
       "runs": [
         "pass"
@@ -80,7 +102,28 @@
       ]
     },
     {
+      "name": "logging-json-file (2)",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "logging-json-file (3)",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
       "name": "port-publishing",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "port-publishing (2)",
       "group": null,
       "runs": [
         "pass"
@@ -94,7 +137,28 @@
       ]
     },
     {
+      "name": "pruning (2)",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
       "name": "resource-constraints",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "resource-constraints (2)",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "resource-constraints (3)",
       "group": null,
       "runs": [
         "pass"
@@ -109,6 +173,13 @@
     },
     {
       "name": "restart-policies (2)",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "restart-policies (3)",
       "group": null,
       "runs": [
         "pass"
@@ -144,6 +215,13 @@
     },
     {
       "name": "volumes",
+      "group": null,
+      "runs": [
+        "pass"
+      ]
+    },
+    {
+      "name": "volumes (2)",
       "group": null,
       "runs": [
         "pass"

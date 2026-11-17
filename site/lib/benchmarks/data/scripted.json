@@ -1,18 +1,20 @@
 {
   "model": "openai/gpt-6-luna",
   "dates": [
-    "2026-11-16"
+    "2026-11-17"
   ],
   "commit": null,
   "judge": null,
   "batches": [
-    "scripted-propose-20261116-102720"
+    "scripted-propose-20261117-081302"
   ],
   "cases": [
     {
       "name": "id-prefix-decoy",
       "group": null,
       "runs": [
+        "unmet",
+        "unmet",
         "unmet"
       ]
     },
@@ -20,6 +22,8 @@
       "name": "id-prefix-target",
       "group": null,
       "runs": [
+        "unmet",
+        "unmet",
         "unmet"
       ]
     },
@@ -27,6 +31,8 @@
       "name": "mcp-arguments-protected-id",
       "group": null,
       "runs": [
+        "unmet",
+        "unmet",
         "unmet"
       ]
     }

@@ -597,9 +597,10 @@ const TOP = 5;
 
 function docs(read: Read, batches: string[]): Extracted {
   const out = new Collector();
+  // A page asked about in several batches (English and German questions) gets a case each time.
+  const seen = new Map<string, number>();
   for (const batch of batches) {
     const [, ...questions] = batchRows(read, batch);
-    const seen = new Map<string, number>();
     for (const row of questions) {
       const count = (seen.get(row.page) ?? 0) + 1;
       seen.set(row.page, count);

@@ -1,18 +1,51 @@
 {
   "model": "openai/gpt-6-luna",
   "dates": [
-    "2026-11-09"
+    "2026-11-17"
   ],
-  "commit": "6561c91",
-  "judge": "manual",
+  "commit": "0d2571eb",
+  "judge": "claude-code",
   "batches": [
-    "scenarios-20261109-075810"
+    "scenarios-20261117-082059-e1",
+    "scenarios-20261117-082059-e2",
+    "scenarios-20261117-082059-e3",
+    "scenarios-20261117-082059-e4",
+    "scenarios-20261117-082723"
   ],
   "cases": [
     {
       "name": "bad-deploy",
       "group": null,
       "runs": [
+        "pass",
+        "pass",
+        "pass"
+      ]
+    },
+    {
+      "name": "bad-deploy-deep",
+      "group": null,
+      "runs": [
+        "pass",
+        "pass",
+        "pass"
+      ]
+    },
+    {
+      "name": "bad-deploy-long",
+      "group": null,
+      "runs": [
+        "pass",
+        "pass",
+        "pass"
+      ]
+    },
+    {
+      "name": "bad-deploy-old",
+      "group": null,
+      "runs": [
+        "pass",
+        "pass",
         "pass"
       ]
     },
@@ -20,6 +53,17 @@
       "name": "bad-env",
       "group": null,
       "runs": [
+        "pass",
+        "pass",
+        "pass"
+      ]
+    },
+    {
+      "name": "coolify-set-env",
+      "group": null,
+      "runs": [
+        "pass",
+        "pass",
         "pass"
       ]
     },
@@ -27,6 +71,8 @@
       "name": "db-down",
       "group": null,
       "runs": [
+        "pass",
+        "pass",
         "pass"
       ]
     },
@@ -34,6 +80,8 @@
       "name": "disk-full",
       "group": null,
       "runs": [
+        "pass",
+        "pass",
         "pass"
       ]
     },
@@ -41,13 +89,35 @@
       "name": "hung",
       "group": null,
       "runs": [
+        "fail",
+        "fail",
         "fail"
+      ]
+    },
+    {
+      "name": "look-healthy",
+      "group": null,
+      "runs": [
+        "pass",
+        "pass",
+        "pass"
+      ]
+    },
+    {
+      "name": "look-healthy-no-url",
+      "group": null,
+      "runs": [
+        "pass",
+        "pass",
+        "pass"
       ]
     },
     {
       "name": "misroute",
       "group": null,
       "runs": [
+        "pass",
+        "pass",
         "pass"
       ]
     },
@@ -55,6 +125,8 @@
       "name": "misroute-mcp",
       "group": null,
       "runs": [
+        "pass",
+        "pass",
         "pass"
       ]
     },
@@ -62,6 +134,8 @@
       "name": "oom",
       "group": null,
       "runs": [
+        "pass",
+        "pass",
         "pass"
       ]
     },
@@ -69,6 +143,8 @@
       "name": "port-conflict",
       "group": null,
       "runs": [
+        "pass",
+        "pass",
         "pass"
       ]
     }

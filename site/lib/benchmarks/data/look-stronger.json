@@ -1,0 +1,40 @@
+{
+  "model": "claude-haiku-5-5",
+  "dates": [
+    "2026-11-17"
+  ],
+  "commit": null,
+  "judge": null,
+  "batches": [
+    "look-20261117-083758"
+  ],
+  "cases": [
+    {
+      "name": "compose-env-closes",
+      "group": null,
+      "runs": [
+        "pass",
+        "pass",
+        "pass"
+      ]
+    },
+    {
+      "name": "coolify-healthy-no-url",
+      "group": null,
+      "runs": [
+        "fail",
+        "pass",
+        "fail"
+      ]
+    },
+    {
+      "name": "coolify-url-500",
+      "group": null,
+      "runs": [
+        "pass",
+        "pass",
+        "pass"
+      ]
+    }
+  ]
+}

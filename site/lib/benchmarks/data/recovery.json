@@ -1,12 +1,12 @@
 {
   "model": "openai/gpt-6-luna",
   "dates": [
-    "2026-11-04"
+    "2026-11-17"
   ],
   "commit": null,
   "judge": null,
   "batches": [
-    "recovery-20261104-124904"
+    "recovery-20261117-075614"
   ],
   "cases": [
     {
