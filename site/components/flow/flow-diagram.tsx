@@ -37,7 +37,7 @@ const WIDE = "(min-width: 1280px)";
 const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
 
 /** Keeps the walk's step on screen, in whichever layout shows (see `followBy`). */
-function follow(stage: HTMLElement | null, step: StepId) {
+export function follow(stage: HTMLElement | null, step: string) {
   const layout = window.matchMedia?.(WIDE).matches ? "wide" : "narrow";
   const node = stage?.querySelector(`[data-step="${step}"][data-layout="${layout}"]`);
   if (!stage || !node) return;
@@ -330,7 +330,7 @@ function Panel({ step: id }: { step: StepId }) {
   );
 }
 
-function Ways({ next, ways }: { next?: string; ways: string[] }) {
+export function Ways({ next, ways }: { next?: string; ways: string[] }) {
   if (!next && ways.length === 0) return <p className="mt-5 font-bold">The run ends here.</p>;
   return (
     <ul className="mt-5 flex flex-wrap gap-2">
