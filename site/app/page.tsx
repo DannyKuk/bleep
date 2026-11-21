@@ -3,7 +3,8 @@ import { Bleep, type Mood } from "@/components/bleep/bleep";
 import { REPO, SiteFooter, SiteHeader, blob } from "~/components/chrome";
 import { Replay } from "~/components/replay/replay";
 
-const VIDEO = "https://github.com/user-attachments/assets/a3fd906c-4b35-498e-bbbb-c9f7c85a612a";
+// Served from the site itself, not from GitHub, so a visit asks no other server for anything.
+const VIDEO = "/video/bleep.mp4";
 
 const STEPS: { mood: Mood; title: string; text: string }[] = [
   {
